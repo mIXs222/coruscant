@@ -1,0 +1,20 @@
+name: Rust CI
+
+on: push
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  subscriber-build:
+    runs-on: ubuntu-latest
+    env:
+       working-directory: ./subscriber
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose
+      working-directory: ${{env.working-directory}} 
+    - name: Run tests
+      run: cargo test --verbose
+      working-directory: ${{env.working-directory}} 
