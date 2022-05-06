@@ -1,41 +1,35 @@
 use chashmap::CHashMap;
+use std::sync::Arc;
+use std::sync::RwLock;
+use tracing::Event;
 use tracing::Id;
 use tracing::span;
+use tracing::Level;
 use tracing::subscriber::Subscriber;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
 use tracing_subscriber::registry::LookupSpan;
 
-
-#[derive(Clone, Debug)]
-struct SpanRecord {
-    id: Id,
-    name: &'static str,
-    latest: Option<Box<SpanRecord>>,
-}
-
-impl SpanRecord {
-    pub fn new(id: Id, name: &'static str) -> SpanRecord {
-        SpanRecord {
-          id,
-          name,
-          latest: None,
-        }
-    }
-}
-
+use crate::processor::DependencyProcessor;
+use crate::record::ROOT_SPAN;
+use crate::record::SpanRecord;
 
 /// A subscriber layer looking for reliability dependency
-#[derive(Default)]
 pub struct DependencyLayer {
   records: CHashMap<Id, SpanRecord>,
+  root_sr: RwLock<SpanRecord>,
+  processor: Arc<DependencyProcessor>,
 }
 
 impl DependencyLayer {
-    pub fn new() -> DependencyLayer {
-        DependencyLayer {
-          records: CHashMap::new(),
-        }
+    pub fn construct() -> (DependencyLayer, Arc<DependencyProcessor>) {
+        let processor = Arc::new(DependencyProcessor::new());
+        let layer = DependencyLayer {
+            records: CHashMap::new(),
+            root_sr: RwLock::new(SpanRecord::new(Id::from_u64(1), ROOT_SPAN)),
+            processor: processor.clone(),
+        };
+        (layer, processor)
     }
 
     fn stacked_span_id(&self, current_sr: &SpanRecord, parent_id: &Id) {
@@ -47,19 +41,52 @@ impl DependencyLayer {
 
     fn stacked_span(&self, current_sr: &SpanRecord, parent_sr: &mut SpanRecord) {
         if let Some(prev_sr) = &parent_sr.latest {
-            self.follows_under(current_sr, prev_sr, Some(parent_sr));
+            self.record_follows_under(current_sr, prev_sr, parent_sr);
+        } else {
+            self.record_stacked_span(current_sr, parent_sr);
         }
         parent_sr.latest = Some(Box::new(current_sr.clone()));
-        println!("Span {:?} [ {:?} ]", parent_sr.name, current_sr.name);
     }
 
-    fn follows_under(&self, current_sr: &SpanRecord, prev_sr: &SpanRecord, parent_sr: Option<&SpanRecord>) {
-        let parent_str = format!(
-            "{:?}, {:?}",
-            parent_sr.map(|sr| sr.name),
-            parent_sr.map(|sr| sr.id.clone())
+    fn rooted_span(&self, current_sr: &SpanRecord) {
+        if let Some(prev_sr) = &self.root_sr.read().unwrap().latest {
+            self.record_follows_rooted(current_sr, prev_sr);
+        } else {
+            self.record_rooted_span(current_sr);
+        }
+        self.root_sr.write().unwrap().latest = Some(Box::new(current_sr.clone()));
+    }
+
+    fn record_rooted_span(&self, current_sr: &SpanRecord) {
+        self.processor.record_span(current_sr, &self.root_sr.read().unwrap());
+    }
+
+    fn record_follows_rooted(&self, current_sr: &SpanRecord, prev_sr: &SpanRecord) {
+        self.processor.record_span_follows(
+            current_sr,
+            prev_sr,
+            &self.root_sr.read().unwrap(),
         );
-        println!("Span {} [ {:?}  -->  {:?} ]", parent_str, prev_sr.name, current_sr.name);
+    }
+
+    fn record_stacked_span(&self, current_sr: &SpanRecord, parent_sr: &SpanRecord) {
+        self.processor.record_span(current_sr, parent_sr);
+    }
+
+    fn record_follows_under(&self, current_sr: &SpanRecord, prev_sr: &SpanRecord, parent_sr: &SpanRecord) {
+        self.processor.record_span_follows(
+            current_sr,
+            prev_sr,
+            parent_sr,
+        );
+    }
+
+    fn record_failure(&self, current_id: &Id) {
+        if let Some(current_sr) = self.records.get(current_id) {
+            self.processor.record_span_fails(&current_sr)
+        } else {
+            log::warn!("Report failure on unseen span {:?}", current_id);
+        }
     }
 }
 
@@ -75,6 +102,8 @@ where
             Some(parent_id) => self.stacked_span_id(&span_record, parent_id),
             None => if let Some(parent_id) = ctx.current_span().id() {
                 self.stacked_span_id(&span_record, parent_id)
+            } else {
+                self.rooted_span(&span_record)
             },
         }
 
@@ -86,7 +115,7 @@ where
 
     fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
         if self.records.remove(&id).is_none() {
-            log::warn!("Closing span {:?} with a record", id);
+            log::warn!("Closing unseen span {:?} with a record", id);
         }
     }
 
@@ -97,14 +126,26 @@ where
             if let Some(follows_sr) = self.records.get(follows) {
                 match ctx.current_span().id() {
                     Some(parent_id) => match self.records.get(parent_id) {
-                        Some(parent_sr) => self.follows_under(&span_sr, &follows_sr, Some(&parent_sr)),
-                        None => self.follows_under(&span_sr, &follows_sr, None),
+                        Some(parent_sr) => self.record_follows_under(&span_sr, &follows_sr, &parent_sr),
+                        None => self.record_follows_rooted(&span_sr, &follows_sr),
                     },
-                    None => self.follows_under(&span_sr, &follows_sr, None),
+                    None => self.record_follows_rooted(&span_sr, &follows_sr),
                 };   
             }
         }
     }
 
     // TODO: on_id_change ?
+
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        if event.metadata().level() == &Level::ERROR {
+            match event.parent() {
+                Some(span_id) => self.record_failure(span_id),
+                None => if let Some(span_id) = ctx.current_span().id() {
+                    self.record_failure(span_id)
+                },
+            }
+        }
+    }
+
 }

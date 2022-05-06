@@ -9,6 +9,15 @@ type GenericError = Box<dyn Error + Send + Sync>;
 type Result<T> = std::result::Result<T, GenericError>;
 
 #[tracing::instrument]
+fn call() -> Result<()> {
+    call_b()?;
+    for _ in 0 .. 4 {
+        call_c()?;
+    }
+    call_d()
+}
+
+#[tracing::instrument]
 fn call_a() -> Result<()> {
     call_b()?;
     for _ in 0 .. 4 {
@@ -52,18 +61,25 @@ fn main() {
 
     // tested subscriber
     // let subscriber = DummySubscriber::new();
+    let (dep_layer, dep_processor) = DependencyLayer::construct();
     let subscriber = tracing_subscriber::Registry::default()
-      .with(DependencyLayer::new());
+      .with(dep_layer);
       // .with(DummyLayer::new());
       // .with(ErrorLayer::default());
     tracing::subscriber::set_global_default(subscriber)
         .expect("setting global default failed");
 
+    // print periodically
+    dep_processor.clone().install_periodic_write_threaded();
+
     // run the program
-    for _ in 0..5 {
+    // loop {
+    for _ in 0 .. 1_000_000 {
       match call_a() {
         Ok(()) => {},
-        Err(e) => println!("!!! FAILED !!! {}", e),
+        Err(e) => log::info!("!!! FAILED !!! {}", e),
       }
     }
+
+    println!("{:#?}", dep_processor.summarize());
 }
