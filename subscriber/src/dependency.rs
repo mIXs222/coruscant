@@ -81,9 +81,36 @@ impl DependencyLayer {
         );
     }
 
-    fn record_failure(&self, current_id: &Id) {
-        if let Some(current_sr) = self.records.get(current_id) {
-            self.processor.record_span_fails(&current_sr)
+    fn record_close(&self, current_sr: &SpanRecord) {
+        if current_sr.failing {
+            if let Some(latest_sr) = &current_sr.latest {
+                self.processor.record_span_fails_from(latest_sr, current_sr);
+            } else {
+                self.processor.record_span_fails(current_sr);
+            }
+        } else if let Some(latest_sr) = &current_sr.latest {
+            self.processor.record_span_succeeds_from(latest_sr, current_sr);
+        } else {
+            self.processor.record_span_succeeds(current_sr);
+        }
+    }
+
+    // fn record_close_under(&self, current_sr: &SpanRecord) {
+    //     if let Some(parent_sr) = self.records.get(parent_id) {
+    //         if current_sr.failing {
+    //             self.processor.record_span_fails(current_sr, &parent_sr)
+    //         } else {
+    //             self.processor.record_span_succeeds(current_sr, &parent_sr);
+    //         }
+    //     } else {
+    //         log::warn!("Report close under unseen parent {:?}", parent_id);
+    //         self.record_close(current_sr);
+    //     }
+    // }
+
+    fn record_found_failure(&self, current_id: &Id) {
+        if let Some(mut current_sr) = self.records.get_mut(current_id) {
+            current_sr.failing = true;
         } else {
             log::warn!("Report failure on unseen span {:?}", current_id);
         }
@@ -114,7 +141,9 @@ where
     }
 
     fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
-        if self.records.remove(&id).is_none() {
+        if let Some(sr) = self.records.remove(&id) {
+            self.record_close(&sr);
+        } else {
             log::warn!("Closing unseen span {:?} with a record", id);
         }
     }
@@ -140,9 +169,9 @@ where
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         if event.metadata().level() == &Level::ERROR {
             match event.parent() {
-                Some(span_id) => self.record_failure(span_id),
+                Some(span_id) => self.record_found_failure(span_id),
                 None => if let Some(span_id) = ctx.current_span().id() {
-                    self.record_failure(span_id)
+                    self.record_found_failure(span_id)
                 },
             }
         }

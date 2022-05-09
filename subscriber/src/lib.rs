@@ -7,5 +7,4 @@ pub mod markov;
 pub mod processor;
 
 // subscribers and layers
-pub mod dummy;
 pub mod dependency;

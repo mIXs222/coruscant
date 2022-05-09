@@ -8,16 +8,7 @@ use coruscant_subscriber::dependency::DependencyLayer;
 type GenericError = Box<dyn Error + Send + Sync>;
 type Result<T> = std::result::Result<T, GenericError>;
 
-#[tracing::instrument]
-fn call() -> Result<()> {
-    call_b()?;
-    for _ in 0 .. 4 {
-        call_c()?;
-    }
-    call_d()
-}
-
-#[tracing::instrument]
+#[tracing::instrument(err)]
 fn call_a() -> Result<()> {
     call_b()?;
     for _ in 0 .. 4 {
@@ -26,7 +17,7 @@ fn call_a() -> Result<()> {
     call_d()
 }
 
-#[tracing::instrument]
+#[tracing::instrument(err)]
 fn call_b() -> Result<()> {
     if rand::thread_rng().gen_bool(0.5) {
         tracing::error!("B failed");
@@ -35,7 +26,7 @@ fn call_b() -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument]
+#[tracing::instrument(err)]
 fn call_c() -> Result<()> {
     if rand::thread_rng().gen_bool(0.1) {
         tracing::error!("C failed");
@@ -44,7 +35,7 @@ fn call_c() -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument]
+#[tracing::instrument(err)]
 fn call_d() -> Result<()> {
     if rand::thread_rng().gen_bool(0.1) {
         tracing::error!("D failed");
@@ -77,7 +68,7 @@ fn main() {
     for _ in 0 .. 1_000_000 {
       match call_a() {
         Ok(()) => {},
-        Err(e) => log::info!("!!! FAILED !!! {}", e),
+        Err(e) => log::trace!("!!! FAILED !!! {}", e),
       }
     }
 

@@ -6,6 +6,7 @@ pub struct SpanRecord {
     pub id: Id,
     pub name: &'static str,
     pub latest: Option<Box<SpanRecord>>,
+    pub failing: bool,
 }
 
 impl SpanRecord {
@@ -14,6 +15,7 @@ impl SpanRecord {
           id,
           name,
           latest: None,
+          failing: false,
         }
     }
 }

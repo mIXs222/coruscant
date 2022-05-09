@@ -12,6 +12,8 @@ use crate::record::SpanRecord;
 
 
 const INITIAL_STATE: &str = "__INITIAL_STATE__";
+const SUCCESS_STATE: &str = "__SUCCESS_STATE__";
+const FAILURE_STATE: &str = "__FAILURE_STATE__";
 const WRITE_PERIOD: Duration = Duration::from_secs(10);
 const DEPENDENCY_OUT: &str = "dependency_summary.jsons";
 
@@ -60,7 +62,6 @@ impl DependencyProcessor {
             INITIAL_STATE.to_string(),
             current_sr.name.to_string(),
         );
-        self.fail_bernoulli.observe(current_sr.name.to_string());
     }
 
     pub fn record_span_follows(&self, current_sr: &SpanRecord, prev_sr: &SpanRecord, parent_sr: &SpanRecord) {
@@ -70,12 +71,22 @@ impl DependencyProcessor {
             prev_sr.name.to_string(),
             current_sr.name.to_string(),
         );
-        self.fail_bernoulli.observe(current_sr.name.to_string());
     }
 
-    pub fn record_span_fails(&self, current_sr: &SpanRecord) {
-        log::trace!("Fail {}", current_sr.name);
-        self.fail_bernoulli.observe_event(current_sr.name.to_string());
+    pub fn record_span_succeeds(&self, parent_sr: &SpanRecord) {
+        self.record_span_succeeds_inner(INITIAL_STATE, parent_sr);
+    }
+
+    pub fn record_span_succeeds_from(&self, current_sr: &SpanRecord, parent_sr: &SpanRecord) {
+        self.record_span_succeeds_inner(current_sr.name, parent_sr);
+    }
+
+    pub fn record_span_fails(&self, parent_sr: &SpanRecord) {
+        self.record_span_fails_inner(INITIAL_STATE, parent_sr);
+    }
+
+    pub fn record_span_fails_from(&self, current_sr: &SpanRecord, parent_sr: &SpanRecord) {
+        self.record_span_fails_inner(current_sr.name, parent_sr);
     }
 
     pub fn summarize(&self) -> DependencySummary {
@@ -83,6 +94,47 @@ impl DependencyProcessor {
             span_markov: self.span_markov.clone().summarize(),
             fail_bernoulli: self.fail_bernoulli.clone().summarize(),
         }
+    }
+
+    pub fn install_periodic_write_threaded(self: Arc<Self>) {
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(WRITE_PERIOD);
+                if let Err(e) = self.write() {
+                    log::error!("Failed to write dependency due to {}", e);
+                }
+            }
+        });
+    }
+
+    pub async fn install_periodic_write_async(self: Arc<Self>) {
+        let mut interval_timer = tokio::time::interval(WRITE_PERIOD);
+        loop {
+            interval_timer.tick().await;
+            if let Err(e) = self.write() {
+                log::error!("Failed to write dependency due to {}", e);
+            }
+        }
+    }
+
+    fn record_span_succeeds_inner(&self, current: &str, parent_sr: &SpanRecord) {
+        log::trace!("Succeed {}", parent_sr.name);
+        self.span_markov.observe(
+            parent_sr.name.to_string(),
+            current.to_string(),
+            SUCCESS_STATE.to_string(),
+        );
+        self.fail_bernoulli.observe_absent(parent_sr.name.to_string());
+    }
+
+    fn record_span_fails_inner(&self, current: &str, parent_sr: &SpanRecord) {
+        log::trace!("Fail {}", parent_sr.name);
+        self.span_markov.observe(
+            parent_sr.name.to_string(),
+            current.to_string(),
+            FAILURE_STATE.to_string(),
+        );
+        self.fail_bernoulli.observe_present(parent_sr.name.to_string());
     }
 
     fn write(&self) -> std::io::Result<()> {
@@ -109,26 +161,5 @@ impl DependencyProcessor {
             log::error!("Failed to serialize dependency summary");
         }
         Ok(())
-    }
-
-    pub fn install_periodic_write_threaded(self: Arc<Self>) {
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(WRITE_PERIOD);
-                if let Err(e) = self.write() {
-                    log::error!("Failed to write dependency due to {}", e);
-                }
-            }
-        });
-    }
-
-    pub async fn install_periodic_write_async(self: Arc<Self>) {
-        let mut interval_timer = tokio::time::interval(WRITE_PERIOD);
-        loop {
-            interval_timer.tick().await;
-            if let Err(e) = self.write() {
-                log::error!("Failed to write dependency due to {}", e);
-            }
-        }
     }
 }

@@ -15,12 +15,13 @@ struct BernEstimator {
 }
 
 impl BernEstimator {
-    fn observe(&mut self) {
-        self.total_count += 1
+    fn observe_absent(&mut self) {
+        self.total_count += 1;
     }
 
-    fn observe_event(&mut self) {
-        self.event_count += 1
+    fn observe_present(&mut self) {
+        self.total_count += 1;
+        self.event_count += 1;
     }
 
     fn summarize(self) -> BernSummary {
@@ -38,19 +39,23 @@ pub struct CategoryBernEstimator<T> {
 impl<T> CategoryBernEstimator<T> 
 where T: PartialEq + Eq + Hash + Ord + Default + std::fmt::Debug
 {
-    pub fn observe(&self, state: T) {
-        self.state_models.upsert(
-            state,
-            BernEstimator::default,
-            |bm| bm.observe(),
-        );
+    pub fn observe_absent(&self, state: T) {
+        if self.state_models.contains_key(&state) {
+            self.state_models.get_mut(&state).unwrap().observe_absent()
+        } else {
+            let mut bm = BernEstimator::default();
+            bm.observe_absent();
+            self.state_models.insert_new(state, bm)
+        }
     }
 
-    pub fn observe_event(&self, state: T) {
-        if let Some(mut sm) = self.state_models.get_mut(&state) {
-            sm.observe_event();
+    pub fn observe_present(&self, state: T) {
+        if self.state_models.contains_key(&state) {
+            self.state_models.get_mut(&state).unwrap().observe_present()
         } else {
-            log::warn!("Observed event on unseen state {:?}", state);
+            let mut bm = BernEstimator::default();
+            bm.observe_present();
+            self.state_models.insert_new(state, bm)
         }
     }
 

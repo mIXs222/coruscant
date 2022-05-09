@@ -53,11 +53,13 @@ struct MarkovEstimator<T> {
 // impl<T: PartialEq + Eq + Hash + Default> MarkovEstimator<T> {
 impl<T: PartialEq + Eq + Hash + Ord + Default> MarkovEstimator<T> {
     fn observe(&self, state: T, next_state: T) {
-        self.state_models.upsert(
-            state,
-            StateEstimator::default,
-            |sm| sm.observe(next_state),
-        );
+        if self.state_models.contains_key(&state) {
+            self.state_models.get_mut(&state).unwrap().observe(next_state)
+        } else {
+            let mut sm = StateEstimator::default();
+            sm.observe(next_state);
+            self.state_models.insert_new(state, sm)
+        }
     }
 
     fn summarize(self) -> MarkovSummary<T> {
@@ -77,11 +79,13 @@ pub struct ContextMarkovEstimator<T> {
 // impl<T: PartialEq + Eq + Hash + Default> ContextMarkovEstimator<T> {
 impl<T: PartialEq + Eq + Hash + Ord + Default> ContextMarkovEstimator<T> {
     pub fn observe(&self, context: T, state: T, next_state: T) {
-        self.span_models.upsert(
-            context,
-            MarkovEstimator::default,
-            |mm| mm.observe(state, next_state),
-        );
+        if self.span_models.contains_key(&context) {
+            self.span_models.get_mut(&context).unwrap().observe(state, next_state)
+        } else {
+            let mm = MarkovEstimator::default();
+            mm.observe(state, next_state);
+            self.span_models.insert_new(context, mm)
+        }
     }
 
     pub fn summarize(self) -> ContextMarkovSummary<T> {

@@ -9,9 +9,11 @@ jobs:
        working-directory: ./subscriber
     steps:
       - uses: actions/checkout@v1
+        with:
+          args: --manifest-path ${{env.working-directory}}/Cargo.toml
       - run: rustup component add clippy
         working-directory: ${{env.working-directory}}
       - uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features
+          args: --all-features --manifest-path ${{env.working-directory}}/Cargo.toml
