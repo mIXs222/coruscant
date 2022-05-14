@@ -1,3 +1,6 @@
+use std::collections::BTreeSet;
+use std::time::Duration;
+use std::time::Instant;
 use tracing::Id;
 
 
@@ -5,8 +8,10 @@ use tracing::Id;
 pub struct SpanRecord {
     pub id: Id,
     pub name: &'static str,
+    pub creation_time: Instant,
     pub latest: Option<Box<SpanRecord>>,
     pub failing: bool,
+    pub failing_subspans: BTreeSet<String>,
 }
 
 impl SpanRecord {
@@ -14,9 +19,15 @@ impl SpanRecord {
         SpanRecord {
           id,
           name,
+          creation_time: Instant::now(),
           latest: None,
           failing: false,
+          failing_subspans: BTreeSet::new(),
         }
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        self.creation_time.elapsed()
     }
 }
 

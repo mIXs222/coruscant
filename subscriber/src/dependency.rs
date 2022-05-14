@@ -35,7 +35,7 @@ impl DependencyLayer {
     fn stacked_span_id(&self, current_sr: &SpanRecord, parent_id: &Id) {
         match self.records.get_mut(parent_id) {
             Some(mut parent_sr) => self.stacked_span(current_sr, &mut parent_sr),
-            None => log::warn!("Latest span of {:?} was not initialized", parent_id),
+            None => log::warn!("Parent span record not found {:?}", parent_id),
         }
     }
 
@@ -81,17 +81,32 @@ impl DependencyLayer {
         );
     }
 
-    fn record_close(&self, current_sr: &SpanRecord) {
+    fn record_close(&self, current_sr: &SpanRecord, parent_id: Option<&Id>) {
+        match parent_id {
+            Some(parent_id) => match self.records.get_mut(parent_id) {
+                Some(mut parent_sr) => self.record_close_under(current_sr, &mut parent_sr),
+                None => log::warn!("Parent span record not found {:?}", parent_id),
+            },
+            None => self.record_close_under(current_sr, &mut self.root_sr.write().unwrap())
+        }
+    }
+
+    fn record_close_under(&self, current_sr: &SpanRecord, parent_sr: &mut SpanRecord) {
+    // fn record_close_under(&self, current_sr: &SpanRecord) {
         if current_sr.failing {
             if let Some(latest_sr) = &current_sr.latest {
                 self.processor.record_span_fails_from(latest_sr, current_sr);
+                parent_sr.failing_subspans.insert(current_sr.name.to_string());
             } else {
                 self.processor.record_span_fails(current_sr);
+                parent_sr.failing_subspans.insert(current_sr.name.to_string());
             }
         } else if let Some(latest_sr) = &current_sr.latest {
             self.processor.record_span_succeeds_from(latest_sr, current_sr);
+            // parent_sr.failing_subspans.insert(current_sr.name.to_string());
         } else {
             self.processor.record_span_succeeds(current_sr);
+            // parent_sr.failing_subspans.insert(current_sr.name.to_string());
         }
     }
 
@@ -140,9 +155,10 @@ where
         }
     }
 
-    fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         if let Some(sr) = self.records.remove(&id) {
-            self.record_close(&sr);
+            self.record_close(&sr, ctx.current_span().id());
+            // self.record_close_under(&sr);
         } else {
             log::warn!("Closing unseen span {:?} with a record", id);
         }

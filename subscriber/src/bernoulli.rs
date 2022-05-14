@@ -3,11 +3,12 @@ use chashmap::CHashMap;
 use std::hash::Hash;
 
 
-type BernSummary = f64;
-pub type CategoryBernSummary<T> = BTreeMap<T, BernSummary>;
+type BernSummary = (usize, usize);
+type CategoryBernSummary<T> = BTreeMap<T, BernSummary>;
+pub type ManyCategoryBernSummary<T> = BTreeMap<T, CategoryBernSummary<T>>;
 
 
-/* Single-state transition model */
+/* Bernoulli */
 #[derive(Default, Clone, Debug)]
 struct BernEstimator {
     total_count: usize,
@@ -25,12 +26,12 @@ impl BernEstimator {
     }
 
     fn summarize(self) -> BernSummary {
-        self.event_count as f64 / self.total_count as f64
+        (self.event_count, self.total_count)
     }
 }
 
 
-/* Transition model between multiple states */
+/* Multiple Bernoulli  */
 #[derive(Default, Clone, Debug)]
 pub struct CategoryBernEstimator<T> {
     state_models: CHashMap<T, BernEstimator>
@@ -62,6 +63,43 @@ where T: PartialEq + Eq + Hash + Ord + Default + std::fmt::Debug
     pub fn summarize(self) -> CategoryBernSummary<T> {
         self.state_models.into_iter()
             .map(|(context, bm)| (context, bm.summarize()))
+            .collect()
+    }
+}
+
+
+/* Many Multiple Bernoulli */
+#[derive(Default, Clone, Debug)]
+pub struct ManyCategoryBernEstimator<T> {
+    state_models: CHashMap<T, CategoryBernEstimator<T>>
+}
+
+impl<T> ManyCategoryBernEstimator<T> 
+where T: PartialEq + Eq + Hash + Ord + Default + std::fmt::Debug
+{
+    pub fn observe_absent(&self, state: T, substate: T) {
+        if self.state_models.contains_key(&state) {
+            self.state_models.get_mut(&state).unwrap().observe_absent(substate)
+        } else {
+            let cbm = CategoryBernEstimator::default();
+            cbm.observe_absent(substate);
+            self.state_models.insert_new(state, cbm)
+        }
+    }
+
+    pub fn observe_present(&self, state: T, substate: T) {
+        if self.state_models.contains_key(&state) {
+            self.state_models.get_mut(&state).unwrap().observe_present(substate)
+        } else {
+            let cbm = CategoryBernEstimator::default();
+            cbm.observe_present(substate);
+            self.state_models.insert_new(state, cbm)
+        }
+    }
+
+    pub fn summarize(self) -> ManyCategoryBernSummary<T> {
+        self.state_models.into_iter()
+            .map(|(context, cbm)| (context, cbm.summarize()))
             .collect()
     }
 }
